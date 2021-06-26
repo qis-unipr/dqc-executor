@@ -1,0 +1,52 @@
+network: main_network
+
+ebit_coupling_map:
+  entries:
+    - qpu1[1] <-> qpu2[1]
+    - qpu3[1] <-> qpu4[1]
+
+components:
+  qpu1:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 1
+
+  qpu2:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 1
+
+  qpu3:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 1
+
+  qpu4:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 1
+
+  quantum_connection1_2:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: qpu1
+      node2: qpu2
+
+
+  quantum_connection3_4:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: qpu3
+      node2: qpu4
