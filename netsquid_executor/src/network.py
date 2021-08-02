@@ -148,6 +148,15 @@ class NetworkWrapper:
         """
         return self.network.nodes.items()
 
+    def get_node(self, node_name: str):
+        """
+        Args:
+            node_name: the name of the node
+
+        Returns (netsquid.nodes.Node): the node
+        """
+        return self.network.nodes[node_name]
+
     def get_owner_of_qubit(self, q: Qubit):
         """
         Returns the owner of the specified qubit from the nodes of the given network by matching the names.

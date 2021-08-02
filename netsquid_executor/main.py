@@ -10,6 +10,9 @@ def main():
     conf = input("Insert YAML file: ")
     code = input("Insert QASM file: ")
 
+    # conf = 'tests/test5.yaml'
+    # code = 'tests/test5.qasm'
+
     if conf == "" or code == "":
         print("Insert valid input files")
         sys.exit(1)
@@ -50,6 +53,14 @@ def main():
         print(network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0].qstate.qrepr.ket)
 
     if "test3" in conf:
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
+                                             network.network.nodes["alice"].subcomponents["main_memory"].peek(1)[0]]))
+        print()
+
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["bob"].subcomponents["main_memory"].peek(0)[0],
+                                             network.network.nodes["bob"].subcomponents["main_memory"].peek(1)[0]]))
+
+    if "test5" in code:
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["alice"].subcomponents["main_memory"].peek(1)[0]]))
         print()

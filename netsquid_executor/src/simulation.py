@@ -39,6 +39,9 @@ class ExecutionProtocol(NodeProtocol):
             "cz": INSTR_CZ,
         }
 
+        self.instr_id = -1
+        self._passed = dict()
+
     def is_local_qubit(self, qubit: Qubit):
         """
         Returns True if the given qubit belongs to the node executing the protocol.
@@ -320,14 +323,48 @@ class ExecutionProtocol(NodeProtocol):
         """
         gate, qubits, bits = gate_tuple
 
+        self._passed[self.instr_id] = None
         if gate.condition is None:
+            self._passed[self.instr_id] = True
             return True
         else:
             # Checks if the name of the current node appears in the condition register and if such register is equal to
             # the value which satisfies the condition.
             if gate.name.lower() in ["remotecx", "entangle"]:
                 raise Exception("Controlled remoteCNOT and controlled entanglement are not supported")
-            return self.node.name in gate.condition[0].name and self.node.register_equal(gate.condition[1])
+            if self.node.name in gate.condition[0].name:
+                self._passed[self.instr_id] = self.node.register_equal(gate.condition[1])
+                return self.node.register_equal(gate.condition[1])
+            else:
+                yield from self.remote_condition_passed(gate_tuple)
+                return self._passed[self.instr_id]
+
+    def remote_condition_passed(self, gate_tuple):
+        gate, qubits, bits = gate_tuple
+        val = gate.condition[1]
+        if val >= 2 ** gate.condition[0].size:
+            raise Exception("Register Overflow in conditional gate")
+        control = self.network.get_node(gate.condition[0].name.split('_')[0])
+        connection = self.network.get_classical_connection_between_nodes(self.node, control)
+        # We identify its endpoint within the classical communication channel
+        if list(connection.ports.values())[0].connected_port.component is self.node:
+            port1 = list(connection.ports.values())[0].connected_port
+        else:
+            port1 = list(connection.ports.values())[1].connected_port
+
+        bin_val = None
+        yield self.await_port_input(port1)
+        mex = port1.rx_input(header='{}'.format(self.instr_id))
+        bin_val = mex.items[0]
+        if len(bin_val) != gate.condition[0].size:
+            raise Exception("Incomplete binary value for classical remote conditioned operation.")
+        res = format(val, "b")
+        while len(res) < gate.condition[0].size:
+            res = '0{}'.format(res)
+        if res == bin_val:
+            self._passed[self.instr_id] = True
+        else:
+            self._passed[self.instr_id] = False
 
     def measure(self, qubit: Qubit, cbit: Clbit):
         """
@@ -369,8 +406,8 @@ class ExecutionProtocol(NodeProtocol):
 
         """
         gate, qubits, bits = gate_tuple
-
-        if self.condition_passed(gate_tuple):
+        yield from self.condition_passed(gate_tuple)
+        if self._passed.pop(self.instr_id):
             if gate.name.lower() == "entangle":
                 yield from self.entangle_qubits(*qubits)
             elif gate.name.lower() == "remotecx":
@@ -406,6 +443,8 @@ class ExecutionProtocol(NodeProtocol):
                 one_local = True
                 break
         if not one_local:
+            if gate.condition and self.node.name in gate.condition[0].name:
+                self.cl_remote_control(gate_tuple)
             return False
 
         # RemoteCX and Entanglement are executed by both parties.
@@ -423,11 +462,29 @@ class ExecutionProtocol(NodeProtocol):
                     raise Exception(f"Invalid qubits were specified in the gate {gate.name}")
             return True
 
+    def cl_remote_control(self, gate_tuple):
+        gate, qubits, bits = gate_tuple
+        node1 = self.network.get_node(qubits[0].register.name.split('_')[0])
+        connection = self.network.get_classical_connection_between_nodes(self.node, node1)
+        if connection is None:
+            raise Exception(f"There is no classical connection between the nodes {self.name} and {node1.name}")
+        # We identify its endpoint within the classical communication channel
+        if list(connection.ports.values())[0].connected_port.component is self.node:
+            port0 = list(connection.ports.values())[0].connected_port
+        else:
+            port0 = list(connection.ports.values())[1].connected_port
+
+        res = ''
+        for i in range(gate.condition[0].size):
+            res = '{}{}'.format(self.node.classical_register[i][0], res)
+        port0.tx_output(Message(res, header='{}'.format(self.instr_id)))
+
     def run(self):
         """
         Executed the protocol
         """
-        for gate_tuple in self.gate_tuples:
+        for instr_id, gate_tuple in enumerate(self.gate_tuples):
+            self.instr_id = instr_id
             if self.can_execute(gate_tuple):
                 yield from self.execute_instruction(gate_tuple)
 
