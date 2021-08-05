@@ -336,11 +336,10 @@ class ExecutionProtocol(NodeProtocol):
                 self._passed[self.instr_id] = self.node.register_equal(gate.condition[1])
                 return self.node.register_equal(gate.condition[1])
             else:
-                yield from self.remote_condition_passed(gate_tuple)
+                yield from self.remote_condition_passed(gate)
                 return self._passed[self.instr_id]
 
-    def remote_condition_passed(self, gate_tuple):
-        gate, qubits, bits = gate_tuple
+    def remote_condition_passed(self, gate):
         val = gate.condition[1]
         if val >= 2 ** gate.condition[0].size:
             raise Exception("Register Overflow in conditional gate")
