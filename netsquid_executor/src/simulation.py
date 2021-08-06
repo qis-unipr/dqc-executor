@@ -1,3 +1,5 @@
+import types
+
 from netsquid.qubits.operators import H, CNOT
 from netsquid.components import Message
 from netsquid.protocols import NodeProtocol
@@ -40,7 +42,6 @@ class ExecutionProtocol(NodeProtocol):
         }
 
         self.instr_id = -1
-        self._passed = dict()
 
     def is_local_qubit(self, qubit: Qubit):
         """
@@ -311,7 +312,7 @@ class ExecutionProtocol(NodeProtocol):
                 # Sends acknowledgement
                 port1_c.tx_output(Message("ACK_ENT", header="ENT"))
 
-    def condition_passed(self, gate_tuple):
+    def condition_passed(self, gate_tuple, condition):
         """
         Checks whether the gate is controlled and, in such case, if the condition is satisfied.
 
@@ -323,23 +324,19 @@ class ExecutionProtocol(NodeProtocol):
         """
         gate, qubits, bits = gate_tuple
 
-        self._passed[self.instr_id] = None
         if gate.condition is None:
-            self._passed[self.instr_id] = True
-            return True
+            condition.passed = True
         else:
             # Checks if the name of the current node appears in the condition register and if such register is equal to
             # the value which satisfies the condition.
             if gate.name.lower() in ["remotecx", "entangle"]:
                 raise Exception("Controlled remoteCNOT and controlled entanglement are not supported")
             if self.node.name in gate.condition[0].name:
-                self._passed[self.instr_id] = self.node.register_equal(gate.condition[1])
-                return self.node.register_equal(gate.condition[1])
+                condition.passed = self.node.register_equal(gate.condition[1])
             else:
-                yield from self.remote_condition_passed(gate)
-                return self._passed[self.instr_id]
+                yield from self.remote_condition_passed(gate, condition)
 
-    def remote_condition_passed(self, gate):
+    def remote_condition_passed(self, gate, condition):
         val = gate.condition[1]
         if val >= 2 ** gate.condition[0].size:
             raise Exception("Register Overflow in conditional gate")
@@ -351,7 +348,6 @@ class ExecutionProtocol(NodeProtocol):
         else:
             port1 = list(connection.ports.values())[1].connected_port
 
-        bin_val = None
         yield self.await_port_input(port1)
         mex = port1.rx_input(header='{}'.format(self.instr_id))
         bin_val = mex.items[0]
@@ -361,9 +357,9 @@ class ExecutionProtocol(NodeProtocol):
         while len(res) < gate.condition[0].size:
             res = '0{}'.format(res)
         if res == bin_val:
-            self._passed[self.instr_id] = True
+            condition.passed = True
         else:
-            self._passed[self.instr_id] = False
+            condition.passed = False
 
     def measure(self, qubit: Qubit, cbit: Clbit):
         """
@@ -375,7 +371,7 @@ class ExecutionProtocol(NodeProtocol):
 
         """
         res = INSTR_MEASURE(self.node.subcomponents["main_memory"],
-                            positions=[qubit._index])
+                            positions=[qubit._index])[0]
         self.node.classical_register[cbit._index] = res
         print(f"{self.node.name} measured: {res}")
 
@@ -405,8 +401,9 @@ class ExecutionProtocol(NodeProtocol):
 
         """
         gate, qubits, bits = gate_tuple
-        yield from self.condition_passed(gate_tuple)
-        if self._passed.pop(self.instr_id):
+        condition = types.SimpleNamespace(passed=False)
+        yield from self.condition_passed(gate_tuple, condition)
+        if condition.passed:
             if gate.name.lower() == "entangle":
                 yield from self.entangle_qubits(*qubits)
             elif gate.name.lower() == "remotecx":
@@ -422,6 +419,7 @@ class ExecutionProtocol(NodeProtocol):
                                                                  positions=self.get_local_qubit_indices(qubits))
                 except KeyError:
                     raise Exception(f"Instruction {gate.name} has not yet been implemented")
+        del condition
 
     def can_execute(self, gate_tuple: tuple):
         """
@@ -475,7 +473,7 @@ class ExecutionProtocol(NodeProtocol):
 
         res = ''
         for i in range(gate.condition[0].size):
-            res = '{}{}'.format(self.node.classical_register[i][0], res)
+            res = '{}{}'.format(self.node.classical_register[i], res)
         port0.tx_output(Message(res, header='{}'.format(self.instr_id)))
 
     def run(self):
