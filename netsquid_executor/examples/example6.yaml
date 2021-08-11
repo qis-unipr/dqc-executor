@@ -1,0 +1,79 @@
+network: main_network
+
+ebit_coupling_map:
+  entries:
+    - alice[1] <-> bob[0]
+    - bob[2] <-> charlie[0]
+    - charlie[2] <-> eve[0]
+    - adam[0] <-> eve[2]
+
+components:
+  alice:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 1
+
+  bob:
+    type: quantum_node
+    properties:
+      n_of_qubits: 3
+      ebits:
+        - 0
+        - 2
+
+  charlie:
+    type: quantum_node
+    properties:
+      n_of_qubits: 3
+      ebits:
+        - 0
+        - 2
+
+  eve:
+    type: quantum_node
+    properties:
+      n_of_qubits: 3
+      ebits:
+        - 0
+        - 2
+
+  adam:
+    type: quantum_node
+    properties:
+      n_of_qubits: 2
+      ebits:
+        - 0
+
+  quantum_connection_bob_alice:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: alice
+      node2: bob
+
+  quantum_connection_bob_charlie:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: bob
+      node2: charlie
+
+  quantum_connection_eve_charlie:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: eve
+      node2: charlie
+
+  quantum_connection_adam_evee:
+    type: quantum_connection
+    properties:
+      length: 20
+    connect_to:
+      node1: eve
+      node2: adam

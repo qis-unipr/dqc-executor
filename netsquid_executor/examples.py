@@ -1,17 +1,19 @@
 from src.simulation import *
 import netsquid as ns
-import qiskit as qs
 import sys
+
 from netsquid_netconf.builder import ComponentBuilder
 from netsquid_netconf.netconf import netconf_generator
+
+from distributed_circuit import DistQuantumCircuit
 
 
 def main():
     conf = input("Insert YAML file: ")
     code = input("Insert QASM file: ")
 
-    # conf = 'tests/test5.yaml'
-    # code = 'tests/test5.qasm'
+    # conf = 'examples/example6.yaml'
+    # code = 'examples/example6.qasm'
 
     if conf == "" or code == "":
         print("Insert valid input files")
@@ -30,19 +32,18 @@ def main():
         coupling_map = []
 
     # The QASM file is parsed and interpreted by Qiskit to be later on interpreted by the tool to setup the simulation.
-    quantum_circuit = qs.QuantumCircuit.from_qasm_file(code)
+    # quantum_circuit = qs.QuantumCircuit.from_qasm_file(code)
+    quantum_circuit = DistQuantumCircuit.from_qasm_file(code)
     print(quantum_circuit.draw(output="text"))
     network = NetworkWrapper(components["network"], coupling_map)
     simulation = Simulation(network, quantum_circuit)
     simulation.start()
 
-
-    #    TEST1
-    if "test1" in conf:
+    if "example1" in conf:
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
                                             network.network.nodes["bob"].subcomponents["main_memory"].peek(0)[0]]))
-    #     TEST2
-    if "test2" in conf:
+
+    if "example2" in conf:
 
         (ns.qubits.qubitapi.combine_qubits([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["alice"].subcomponents["main_memory"].peek(1)[0],
@@ -52,7 +53,7 @@ def main():
 
         print(network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0].qstate.qrepr.ket)
 
-    if "test3" in conf:
+    if "example3" in conf:
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["alice"].subcomponents["main_memory"].peek(1)[0]]))
         print()
@@ -60,7 +61,7 @@ def main():
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["bob"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["bob"].subcomponents["main_memory"].peek(1)[0]]))
 
-    if "test5" in code:
+    if "example5" in code:
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["alice"].subcomponents["main_memory"].peek(1)[0]]))
         print()
@@ -68,7 +69,26 @@ def main():
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["bob"].subcomponents["main_memory"].peek(0)[0],
                                              network.network.nodes["bob"].subcomponents["main_memory"].peek(1)[0]]))
 
-    if "stress_test" in conf:
+    if "example6" in code:
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0]]))
+        print()
+
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["bob"].subcomponents["main_memory"].peek(1)[0]]))
+        print()
+
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["charlie"].subcomponents["main_memory"].peek(1)[0]]))
+        print()
+
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["eve"].subcomponents["main_memory"].peek(1)[0]]))
+
+        print()
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["adam"].subcomponents["main_memory"].peek(1)[0]]))
+
+        print()
+        print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["alice"].subcomponents["main_memory"].peek(0)[0],
+                                             network.network.nodes["adam"].subcomponents["main_memory"].peek(1)[0]]))
+
+    if "example7" in conf:
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["qpu1"].subcomponents["main_memory"].peek(0)[0]]))
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["qpu2"].subcomponents["main_memory"].peek(0)[0]]))
         print(ns.qubits.qubitapi.reduced_dm([network.network.nodes["qpu3"].subcomponents["main_memory"].peek(0)[0]]))
@@ -83,7 +103,6 @@ if __name__ == "__main__":
 '''
 @TODO(Sawii):
 - Remotely controlled operations
-- Entanglement Swapping
 - Sequential Execution of Chunks of Code
     --> Maybe a gate "wait" at which both involved nodes must wait for the other before continuing with the simulation
 - implement all instructions also with custom parameters
