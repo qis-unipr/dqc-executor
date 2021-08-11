@@ -5,7 +5,9 @@ from netsquid.components import Message
 from netsquid.protocols import NodeProtocol
 from netsquid.components.instructions import *
 from netsquid.qubits import create_qubits, operate
-from qiskit import QuantumCircuit
+# from qiskit import QuantumCircuit
+
+from distributed_circuit import DistQuantumCircuit
 from qiskit.circuit import Clbit
 from netsquid import sim_reset, sim_run
 
@@ -100,6 +102,13 @@ class ExecutionProtocol(NodeProtocol):
             res.append(index)
         return res
 
+    def get_classicla_port(self, dest_node: Node):
+        conn = self.network.get_classical_connection_between_nodes(self.node, dest_node)
+        if conn is None:
+            raise Exception(
+                f"There is no classical connection between the nodes {self.node.name} and {dest_node.name}")
+        return get_port(conn, self.node)
+
     def remote_cx(self, q0: Qubit,
                   ent0: Qubit,
                   q1: Qubit,
@@ -169,7 +178,7 @@ class ExecutionProtocol(NodeProtocol):
             meas = INSTR_MEASURE(self.node.subcomponents["main_memory"],
                                  positions=[ent0._index])
             # The control outputs the result of the measurement through its port
-            port0.tx_output(meas[0])
+            port0.tx_output(Message(meas[0], header=f'{self.instr_id}_{self.node.name}'))
             # Waiting for the measurement of the target
             yield self.await_port_input(port0)
             mex = port0.rx_input()
@@ -195,7 +204,8 @@ class ExecutionProtocol(NodeProtocol):
                     positions=[ent1._index])
             # Waits for the control's measurement
             yield self.await_port_input(port1)
-            mex = port1.rx_input()
+
+            mex = port1.rx_input(header=f'{self.instr_id}_{node0.name}')
             val = mex.items[0]
             if val == 1:
                 INSTR_X(self.node.subcomponents["main_memory"],
@@ -211,6 +221,153 @@ class ExecutionProtocol(NodeProtocol):
                 raise Exception("Could not synchronize nodes")
         else:
             raise Exception("Invalid parameters in Remote CNOT gate")
+
+    def ent_swap(self, qubits):
+        node0 = self.network.get_owner_of_qubit(qubits[0])
+        node1 = self.network.get_owner_of_qubit(qubits[-1])
+        n_brokers = (len(qubits) - 2) / 2
+
+        if n_brokers - int(n_brokers) != 0.0:
+            raise Exception(
+                f"[{self.node.name}] Got {qubits} ebits, from which the number of intermediaries nodes is {n_brokers}.")
+        else:
+            n_brokers = int(n_brokers)
+        brokers = {self.network.get_owner_of_qubit(qubits[1 + 2 * b]).name:
+                       (self.network.get_owner_of_qubit(qubits[2 * b]).name,
+                        [qubits[1 + 2 * b], qubits[2 + 2 * b]],
+                        self.network.get_owner_of_qubit(qubits[3 + 2 * b]).name) for b in range(n_brokers)}
+
+        if self.node == node0:
+
+            port = self.get_classicla_port(self.network.get_owner_of_qubit(qubits[1]))
+            yield self.await_port_input(port)
+            mex = port.rx_input(header=self.network.get_owner_of_qubit(qubits[1]).name)
+
+            if mex.items[0] != 'READY':
+                raise Exception(f'[{self.node.name}] Error while synchronizing with broker node {self.network.get_owner_of_qubit(qubits[1]).name}')
+
+            dest_port = self.get_classicla_port(node1)
+            for broker in brokers:
+                port = self.get_classicla_port(self.network.get_node(broker))
+
+                dest_port.tx_output(Message('READY', header=self.node.name))
+
+                yield self.await_port_input(port)
+                mex = port.rx_input(header=broker)
+                if mex.items[0] == 1:
+                    INSTR_Z(self.node.subcomponents["main_memory"],
+                                    positions=[qubits[0]._index])
+
+                yield self.await_port_input(dest_port)
+                mex = dest_port.rx_input(header=node1.name)
+                if mex.items[0] != 'DONE':
+                    raise Exception(
+                        f'[{self.node.name}] Error while synchronizing with broker node {self.network.get_owner_of_qubit(qubits[1]).name}')
+
+        elif self.node == node1:
+            source_port = self.get_classicla_port(node0)
+            for broker in brokers:
+                port = self.get_classicla_port(self.network.get_node(broker))
+                yield self.await_port_input(source_port)
+                mex = source_port.rx_input(header=node0.name)
+                if mex.items[0] != 'READY':
+                    raise Exception(f'[{self.node.name}] Error while synchronizing with broker node {node0.name}')
+                port.tx_output(Message('WAITING', header=self.node.name))
+
+                yield self.await_port_input(port)
+                mex = port.rx_input(header=broker)
+                if mex.items[0] == 1:
+                    INSTR_X(self.node.subcomponents["main_memory"],
+                                    positions=[qubits[-1]._index])
+
+                source_port.tx_output(Message('DONE', header=self.node.name))
+
+            self.network.entangled_qubits.append([qubits[0],qubits[-1]])
+        else:
+            prev, ebits, succ = brokers[self.node.name]
+            e0, e1 = ebits
+
+            source_port = self.get_classicla_port(node0)
+            dest_port = self.get_classicla_port(node1)
+
+            port0 = self.get_classicla_port(self.network.get_node(prev))
+            port1 = self.get_classicla_port(self.network.get_node(succ))
+
+            if prev == node0.name:
+                ent0 = qubits[0]
+            else:
+                ent0 = brokers[prev][1][1]
+            ent_index0 = None
+            for i in range(len(self.network.entangled_qubits)):
+                if [ent0, e0] == self.network.entangled_qubits[i] or [e0, ent0] == self.network.entangled_qubits[i]:
+                    ent_index0 = i
+                    epr0 = self.network.entangled_qubits[i]
+                    break
+            if ent_index0 is None:
+                raise Exception(f"[{self.node.name}] Ebits must be entangled for remote CX to work")
+
+            if succ == node1.name:
+                ent1 = qubits[-1]
+            else:
+                ent1 = brokers[succ][1][0]
+            ent_index1 = None
+            for i in range(len(self.network.entangled_qubits)):
+                if [e1, ent1] == self.network.entangled_qubits[i] or [ent1, e1] == self.network.entangled_qubits[i]:
+                    ent_index1 = i
+                    epr1 = self.network.entangled_qubits[i]
+                    break
+            if ent_index1 is None:
+                raise Exception(f"[{self.node.name}] Ebits must be entangled for remote CX to work")
+
+            INSTR_CX(self.node.subcomponents["main_memory"],
+                     positions=[e0._index, e1._index])
+            INSTR_H(self.node.subcomponents["main_memory"],
+                    positions=[e0._index])
+
+            if prev != node0.name:
+                port0.tx_output(Message('DONE', header=self.node.name))
+
+            measure0 = INSTR_MEASURE(self.node.subcomponents["main_memory"],
+                                    positions=[e0._index])
+
+            if succ != node1.name:
+                yield self.await_port_input(port1)
+                mex = port1.rx_input(header=succ)
+                if mex.items[0] != 'DONE':
+                    raise Exception(f'[{self.node.name}] Error while synchronizing with broker node {succ}')
+
+            measure1 = INSTR_MEASURE(self.node.subcomponents["main_memory"],
+                                    positions=[e1._index])
+
+            if n_brokers == 1:
+                source_port.tx_output(Message('READY', header=self.node.name))
+            elif self.node.name == self.network.get_owner_of_qubit(qubits[1]).name:
+                last = self.network.get_owner_of_qubit(qubits[-2])
+                port = self.get_classicla_port(last)
+                yield self.await_port_input(port)
+                mex = port.rx_input(header=last.name+'_READY')
+                if mex.items[0] != 'READY':
+                    raise Exception(f'[{self.node.name}] Error while synchronizing with broker node {last.name}')
+                source_port.tx_output(Message('READY', header=self.node.name))
+            elif self.node.name == self.network.get_owner_of_qubit(qubits[-2]).name:
+                first = self.network.get_owner_of_qubit(qubits[1])
+                port = self.get_classicla_port(first)
+                port.tx_output(Message('READY', header=self.node.name+'_READY'))
+
+            yield self.await_port_input(dest_port)
+            mex = dest_port.rx_input(header=node1.name)
+            if mex.items[0] != 'WAITING':
+                raise Exception(f'[{self.node.name}] Error while synchronizing with broker node {node0.name}')
+
+            source_port.tx_output(Message(measure0[0], header=self.node.name))
+            dest_port.tx_output(Message(measure1[0], header=self.node.name))
+
+            # Remove used epr pairs from entangled list
+            if epr0 in self.network.entangled_qubits:
+                self.network.entangled_qubits.remove(epr0)
+            if epr1 in self.network.entangled_qubits:
+                self.network.entangled_qubits.remove(epr1)
+
 
     # AT SOURCE github.com/Wojtek242/draft-irtf-qirg-principles/blob/master/draft-irtf-qirg-principles-07.txt (line 672)
     def entangle_qubits(self, q0: Qubit,
@@ -329,7 +486,7 @@ class ExecutionProtocol(NodeProtocol):
         else:
             # Checks if the name of the current node appears in the condition register and if such register is equal to
             # the value which satisfies the condition.
-            if gate.name.lower() in ["remotecx", "entangle"]:
+            if gate.name.lower() in ["remotecx", "entangle", "epr"]:
                 raise Exception("Controlled remoteCNOT and controlled entanglement are not supported")
             if self.node.name in gate.condition[0].name:
                 condition.passed = self.node.register_equal(gate.condition[1])
@@ -373,7 +530,7 @@ class ExecutionProtocol(NodeProtocol):
         res = INSTR_MEASURE(self.node.subcomponents["main_memory"],
                             positions=[qubit._index])[0]
         self.node.classical_register[cbit._index] = res
-        print(f"{self.node.name} measured: {res}")
+        # print(f"{self.node.name} measured: {res}")
 
     def local_cx(self, control: Qubit, target: Qubit):
         """
@@ -404,8 +561,11 @@ class ExecutionProtocol(NodeProtocol):
         condition = types.SimpleNamespace(passed=False)
         yield from self.condition_passed(gate_tuple, condition)
         if condition.passed:
-            if gate.name.lower() == "entangle":
+            if gate.name.lower() == "entangle" or gate.name.lower() == "epr":
                 yield from self.entangle_qubits(*qubits)
+            elif gate.name.lower() == "entswap":
+                yield from self.ent_swap(qubits)
+                # exit(-1)
             elif gate.name.lower() == "remotecx":
                 yield from self.remote_cx(*qubits)
             elif gate.name.lower() == "measure":
@@ -445,7 +605,7 @@ class ExecutionProtocol(NodeProtocol):
             return False
 
         # RemoteCX and Entanglement are executed by both parties.
-        if gate.name.lower() in ["remotecx", "entangle"]:
+        if gate.name.lower() in ["remotecx", "entangle", "entswap", "epr"]:
             return True
         elif gate.name.lower() == "measure":
             if self.is_local_qubit(*qubits) and self.is_local_cbit(*bits):
@@ -493,7 +653,7 @@ class Simulation:
     mapped upon it.
     """
 
-    def __init__(self, network: NetworkWrapper, quantum_circuit: QuantumCircuit):
+    def __init__(self, network: NetworkWrapper, quantum_circuit: DistQuantumCircuit):
         """
         Performs coherence check of the topology and quantum circuit to be executed.
         Args:
@@ -594,5 +754,5 @@ class Simulation:
         for node in self.network.network.nodes.values():
             protocol = ExecutionProtocol(node, self.quantum_circuit.data, self.network)
             protocol.start()
-        stats = sim_run()
+        stats = sim_run(duration=2000*(10**10))
         print(stats)
