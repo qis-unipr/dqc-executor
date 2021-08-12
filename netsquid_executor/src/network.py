@@ -131,6 +131,13 @@ class ClassicalDirectConnection(Connection):
         self.subcomponents[f"{name}_c_direct_connection"].ports["B"].forward_output(self.port_B)
 
 
+def get_port(connection: Connection, node: Node):
+    if list(connection.ports.values())[0].connected_port.component is node:
+        return list(connection.ports.values())[0].connected_port
+    else:
+        return list(connection.ports.values())[1].connected_port
+
+
 class NetworkWrapper:
     """
     The class NetworkWrapper acts a simple wrapper of netsquid.nodes.network.Network to extend with useful information
