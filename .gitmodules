@@ -1,0 +1,3 @@
+[submodule "dqc-circuit"]
+	path = dqc-circuit
+	url = https://github.com/qis-unipr/dqc-circuit
